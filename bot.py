@@ -18,7 +18,7 @@ class PairingBot(discord.Client):
     async def setup_hook(self):
         # For faster testing, sync to a specific guild (replace with your server ID)
         guild = discord.Object(id=os.getenv('GUILD_ID'))
-        self.tree.copy_global_to(guild=guild)
+        self.tree.clear_commands(guild=guild)
         await self.tree.sync(guild=guild)
 
         # Global sync (slower but works everywhere)
