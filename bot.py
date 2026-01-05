@@ -16,13 +16,9 @@ class PairingBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # For faster testing, sync to a specific guild (replace with your server ID)
         guild = discord.Object(id=os.getenv('GUILD_ID'))
         self.tree.clear_commands(guild=guild)
         await self.tree.sync(guild=guild)
-
-        # Global sync (slower but works everywhere)
-        # await self.tree.sync()
 
 bot = PairingBot()
 
@@ -41,24 +37,21 @@ def load_rankings():
             })
     return debaters
 
-def load_judges():
-    with open('judges.json', 'r') as f:
+def load_tournaments():
+    with open('tournaments.json', 'r') as f:
         return json.load(f)
 
 def load_conflicts():
     with open('conflicts.json', 'r') as f:
         return json.load(f)
 
-def select_judges(tournament, conflict_list=None, count=1):
+def select_judges(tournaments_data, conflicts_data, tournament, conflict_list=None, count=1):
     """Select random judges from a tournament, excluding conflicts"""
-    judges_data = load_judges()
-    conflicts_data = load_conflicts()
-
-    if tournament not in judges_data:
-        available_tournaments = ', '.join(judges_data.keys())
+    if tournament not in tournaments_data:
+        available_tournaments = ', '.join(tournaments_data)
         raise ValueError(f"Tournament '{tournament}' not found. Available tournaments: {available_tournaments}")
 
-    available_judges = judges_data[tournament].copy()
+    available_judges = tournaments_data[tournament]["judges"].copy()
 
     # Filter out conflicted judges
     if conflict_list and conflict_list in conflicts_data:
@@ -68,7 +61,6 @@ def select_judges(tournament, conflict_list=None, count=1):
     if len(available_judges) < count:
         raise ValueError(f"Not enough non-conflicted judges available (need {count}, have {len(available_judges)})")
 
-    # Select random judges without replacement
     return random.sample(available_judges, count)
 
 async def tournament_autocomplete(
@@ -76,11 +68,10 @@ async def tournament_autocomplete(
     current: str,
 ) -> list[app_commands.Choice[str]]:
     """Autocomplete function for tournament parameter"""
-    judges_data = load_judges()
-    tournaments = list(judges_data.keys())
+    tournaments_data = load_tournaments()
     return [
         app_commands.Choice(name=tournament.capitalize(), value=tournament)
-        for tournament in tournaments
+        for tournament in tournaments_data
         if current.lower() in tournament.lower()
     ]
 
@@ -90,10 +81,9 @@ async def conflicts_autocomplete(
 ) -> list[app_commands.Choice[str]]:
     """Autocomplete function for conflicts parameter"""
     conflicts_data = load_conflicts()
-    conflict_lists = list(conflicts_data.keys())
     return [
         app_commands.Choice(name=conflict.capitalize(), value=conflict)
-        for conflict in conflict_lists
+        for conflict in conflicts_data
         if current.lower() in conflict.lower()
     ]
 
@@ -105,7 +95,7 @@ async def on_ready():
 
 @app_commands.describe(
     panel="Whether to use a panel of 3 judges instead of 1",
-    tournament="Which tournament's judges to use",
+    tournament="Which tournament's competitors and judges to use",
     conflicts="Which conflict list to apply"
 )
 
@@ -121,52 +111,59 @@ async def generate_pairing(
     conflicts: str = "om"
 ):
     try:
-        # Load data
+        # Load data once
         rankings = load_rankings()
-        judges_data = load_judges()
+        tournaments_data = load_tournaments()
         conflicts_data = load_conflicts()
 
-        # Get available options for autocomplete
-        available_tournaments = list(judges_data.keys())
-        available_conflicts = list(conflicts_data.keys())
-
-        # Validate tournament
-        if tournament not in available_tournaments:
+        # Validate inputs
+        if tournament not in tournaments_data:
             await interaction.response.send_message(
-                f"Invalid tournament. Available: {', '.join(available_tournaments)}",
+                f"Invalid tournament. Available: {', '.join(tournaments_data)}",
                 ephemeral=True
             )
             return
 
-        # Validate conflicts if provided
-        if conflicts and conflicts not in available_conflicts:
+        if conflicts not in conflicts_data:
             await interaction.response.send_message(
-                f"Invalid conflict list. Available: {', '.join(available_conflicts)}",
+                f"Invalid conflict list. Available: {', '.join(conflicts_data)}",
+                ephemeral=True
+            )
+            return
+
+        # Filter rankings to only include tournament entries
+        tournament_entries = set(tournaments_data[tournament]["entries"])
+        eligible_opponents = [r for r in rankings if r['name'] in tournament_entries]
+
+        if not eligible_opponents:
+            await interaction.response.send_message(
+                "No eligible opponents found in both top 50 rankings and tournament entries.",
                 ephemeral=True
             )
             return
 
         # Generate pairing
-        opponent = random.choice(rankings)
+        opponent = random.choice(eligible_opponents)
         side = random.choice(['Aff', 'Neg'])
         opponent_side = 'Neg' if side == 'Aff' else 'Aff'
 
+        # Select judges
         judge_count = 3 if panel else 1
-        judges = select_judges(tournament, conflicts, judge_count)
+        judges = select_judges(tournaments_data, conflicts_data, tournament, conflicts, judge_count)
 
-        # Format the message as an embed
-        judge_label = "Judges" if len(judges) > 1 else "Judge"
-        judge_list = ", ".join(judges)
-
+        # Create and send embed
         embed = discord.Embed(
             title="Debate Pairing",
             color=discord.Color.blue()
         )
         embed.add_field(name=side, value=interaction.user.name, inline=True)
         embed.add_field(name=opponent_side, value=opponent['name'], inline=True)
-        embed.add_field(name=judge_label, value=judge_list, inline=False)
+        embed.add_field(
+            name="Judges" if panel else "Judge",
+            value=", ".join(judges),
+            inline=False
+        )
 
-        # Respond in the current channel with the embed
         await interaction.response.send_message(embed=embed)
 
     except Exception as e:
