@@ -16,9 +16,21 @@ class PairingBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        guild = discord.Object(id=os.getenv('GUILD_ID'))
-        self.tree.clear_commands(guild=guild)
-        await self.tree.sync(guild=guild)
+        try:
+            guild_id = os.getenv('GUILD_ID')
+            if guild_id:
+                guild = discord.Object(id=int(guild_id))
+                self.tree.clear_commands(guild=guild)
+                print(f"Syncing commands to guild {guild_id}...")
+                await self.tree.sync(guild=guild)
+                print(f"Commands synced successfully to guild {guild_id}")
+            else:
+                print("No GUILD_ID set, syncing globally...")
+                await self.tree.sync()
+                print("Commands synced globally")
+        except Exception as e:
+            print(f"Error during setup_hook: {e}")
+            print("Bot will continue but commands may not be available")
 
 bot = PairingBot()
 
