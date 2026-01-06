@@ -132,8 +132,12 @@ async def generate_pairing(
             return
 
         # Filter rankings to only include tournament entries
-        tournament_entries = set(tournaments_data[tournament]["entries"])
-        eligible_opponents = [r for r in rankings if r['name'] in tournament_entries]
+        try:
+            tournaments_data[tournament]["entries"]
+            tournament_entries = set(tournaments_data[tournament]["entries"])
+            eligible_opponents = [r for r in rankings if r['name'] in tournament_entries]
+        except:
+            eligible_opponents = rankings
 
         if not eligible_opponents:
             await interaction.response.send_message(
